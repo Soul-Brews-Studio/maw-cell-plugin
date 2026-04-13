@@ -1,0 +1,22 @@
+{
+  "name": "fusion",
+  "version": "0.1.0",
+  "weight": 50,
+  "entry": "./index.ts",
+  "sdk": "^1.0.0",
+  "description": "Fuse two oracles — merge knowledge, learnings, and resonance across ψ/ vaults",
+  "cli": {
+    "command": "fusion",
+    "help": "maw fusion <source-oracle> [--into <target>] [--dry-run]",
+    "flags": {
+      "--into": "string",
+      "--dry-run": "boolean",
+      "--json": "boolean"
+    }
+  },
+  "api": {
+    "path": "/api/fusion",
+    "methods": ["POST"]
+  },
+  "transport": { "peer": true }
+}
