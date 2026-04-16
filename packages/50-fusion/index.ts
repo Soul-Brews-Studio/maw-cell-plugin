@@ -62,7 +62,8 @@ function resolveOracleVault(oracleName: string, ghqRoot: string): string | null 
         const cfg = JSON.parse(readFileSync(join(fleetDir, file), "utf-8"));
         const name = (cfg.name || "").replace(/^\d+-/, "");
         if (name === oracleName && cfg.windows?.[0]?.repo) {
-          const psi = join(ghqRoot, "github.com", cfg.windows[0].repo, "ψ");
+          const provider = cfg.windows[0].provider || "github.com";
+          const psi = join(ghqRoot, provider, cfg.windows[0].repo, "ψ");
           if (existsSync(psi)) return psi;
         }
       }

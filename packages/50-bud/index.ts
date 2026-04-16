@@ -22,6 +22,7 @@ import { execSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { InvokeContext, InvokeResult } from "./types";
+import { type ForgeProvider, PROVIDER_CLI, ghqCloneUri, parseProvider, providerRepoPath, requireCli } from "../shared/provider";
 
 export const command = {
   name: "bud",
@@ -32,6 +33,7 @@ interface BudOpts {
   from?: string;
   org?: string;
   note?: string;
+  provider?: string;
   root?: boolean;
   blank?: boolean;
   dryRun?: boolean;
@@ -44,6 +46,7 @@ const BUD_FLAGS = {
   "--from": String,
   "--org": String,
   "--note": String,
+  "--provider": String,
   "--root": Boolean,
   "--blank": Boolean,
   "--dry-run": Boolean,
@@ -106,10 +109,10 @@ function loadFleetEntries(): Array<{ file: string; num: number; session: any }> 
 
 // ─── The 7 bud steps ────────────────────────────────────────────────
 
-function step1_createRepo(budRepoSlug: string, budRepoPath: string, dryRun: boolean): string[] {
+function step1_createRepo(budRepoSlug: string, budRepoPath: string, provider: ForgeProvider, dryRun: boolean): string[] {
   const logs: string[] = [];
   if (dryRun) {
-    logs.push(`  ⬡ [dry-run] would create repo: ${budRepoSlug}`);
+    logs.push(`  ⬡ [dry-run] would create repo: ${budRepoSlug} on ${provider}`);
     logs.push(`  ⬡ [dry-run] would clone via ghq to: ${budRepoPath}`);
     return logs;
   }
@@ -117,16 +120,35 @@ function step1_createRepo(budRepoSlug: string, budRepoPath: string, dryRun: bool
     logs.push(`  ○ repo already exists: ${budRepoPath}`);
     return logs;
   }
-  // Check if repo exists on GitHub — match the actual repo name, not the literal "name" key
-  const viewOut = shSafe(`gh repo view ${budRepoSlug} --json name --jq .name 2>/dev/null`);
+  // Check and create repo using provider-specific CLI
+  requireCli(provider);
   const budRepoName = budRepoSlug.split("/").pop() || "";
-  if (viewOut === budRepoName) {
-    logs.push(`  ○ repo already exists on GitHub`);
-  } else {
-    sh(`gh repo create ${budRepoSlug} --private --add-readme`);
-    logs.push(`  ✓ repo created on GitHub: ${budRepoSlug}`);
+  if (provider === "github.com") {
+    const viewOut = shSafe(`gh repo view ${budRepoSlug} --json name --jq .name 2>/dev/null`);
+    if (viewOut === budRepoName) {
+      logs.push(`  ○ repo already exists on ${provider}`);
+    } else {
+      sh(`gh repo create ${budRepoSlug} --private --add-readme`);
+      logs.push(`  ✓ repo created on ${provider}: ${budRepoSlug}`);
+    }
+  } else if (provider === "gitlab.com") {
+    const viewOut = shSafe(`glab repo view ${budRepoSlug} 2>/dev/null`);
+    if (viewOut.length > 0) {
+      logs.push(`  ○ repo already exists on ${provider}`);
+    } else {
+      sh(`glab repo create ${budRepoSlug} --private --defaultBranch main`);
+      logs.push(`  ✓ repo created on ${provider}: ${budRepoSlug}`);
+    }
+  } else if (provider === "codeberg.org") {
+    const viewOut = shSafe(`tea repos search --limit 1 ${budRepoName} 2>/dev/null`);
+    if (viewOut.includes(budRepoName)) {
+      logs.push(`  ○ repo already exists on ${provider}`);
+    } else {
+      sh(`tea repos create --name ${budRepoName} --private`);
+      logs.push(`  ✓ repo created on ${provider}: ${budRepoSlug}`);
+    }
   }
-  sh(`ghq get github.com/${budRepoSlug}`);
+  sh(`ghq get ${ghqCloneUri(provider, budRepoSlug)}`);
   logs.push(`  ✓ cloned via ghq`);
   return logs;
 }
@@ -192,7 +214,7 @@ Run \`/awaken\` for the full identity setup ceremony.
   return logs;
 }
 
-function step4_fleetConfig(name: string, parentName: string | null, org: string, budRepoName: string, dryRun: boolean): string[] {
+function step4_fleetConfig(name: string, parentName: string | null, org: string, budRepoName: string, provider: ForgeProvider, dryRun: boolean): string[] {
   const logs: string[] = [];
   if (dryRun) {
     logs.push(`  ⬡ [dry-run] would create fleet config in ${fleetDir()}/`);
@@ -220,7 +242,11 @@ function step4_fleetConfig(name: string, parentName: string | null, org: string,
   const file = join(dir, `${String(num).padStart(2, "0")}-${name}.json`);
   const cfg: any = {
     name: `${String(num).padStart(2, "0")}-${name}`,
-    windows: [{ name: `${name}-oracle`, repo: `${org}/${budRepoName}` }],
+    windows: [{
+      name: `${name}-oracle`,
+      repo: `${org}/${budRepoName}`,
+      ...(provider !== "github.com" ? { provider } : {}),
+    }],
     sync_peers: parentName ? [parentName] : [],
   };
   if (parentName) {
@@ -313,21 +339,22 @@ async function cmdBud(name: string, opts: BudOpts): Promise<string[]> {
     throw new Error("no parent specified — pass --from <oracle> or --root");
   }
 
+  const provider = parseProvider(opts.provider);
   const budRepoName = `${name}-oracle`;
   const budRepoSlug = `${org}/${budRepoName}`;
-  const budRepoPath = join(ghqRoot(), "github.com", org, budRepoName);
+  const budRepoPath = providerRepoPath(ghqRoot(), provider, org, budRepoName);
 
   if (opts.root) {
-    logs.push(`\n  🌱 Root Bud — ${name} (no parent lineage)\n`);
+    logs.push(`\n  🌱 Root Bud — ${name} on ${provider} (no parent lineage)\n`);
   } else {
-    logs.push(`\n  🧬 Budding — ${parentName} → ${name}\n`);
+    logs.push(`\n  🧬 Budding — ${parentName} → ${name} on ${provider}\n`);
   }
 
   // 7 steps
-  logs.push(...step1_createRepo(budRepoSlug, budRepoPath, !!opts.dryRun));
+  logs.push(...step1_createRepo(budRepoSlug, budRepoPath, provider, !!opts.dryRun));
   logs.push(...step2_initVault(budRepoPath, !!opts.dryRun));
   logs.push(...step3_writeClaudeMd(budRepoPath, name, parentName, !!opts.dryRun));
-  logs.push(...step4_fleetConfig(name, parentName, org, budRepoName, !!opts.dryRun));
+  logs.push(...step4_fleetConfig(name, parentName, org, budRepoName, provider, !!opts.dryRun));
   if (opts.note) logs.push(...step5_writeBirthNote(budRepoPath, name, parentName, opts.note, !!opts.dryRun));
   logs.push(...step6_gitCommit(budRepoPath, parentName, !!opts.dryRun));
   logs.push(...step7_updateParentPeers(name, parentName, !!opts.dryRun));
@@ -359,7 +386,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       if (!name || name === "--help" || name === "-h") {
         return {
           ok: false,
-          error: "usage: maw bud <name> [--from <oracle> | --root] [--org <org>] [--note <text>] [--blank] [--dry-run]",
+          error: "usage: maw bud <name> [--from <oracle> | --root] [--org <org>] [--provider <forge>] [--note <text>] [--blank] [--dry-run]",
         };
       }
       if (name.startsWith("-")) {
@@ -369,6 +396,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
         from: flags["--from"],
         org: flags["--org"],
         note: flags["--note"],
+        provider: flags["--provider"],
         root: flags["--root"],
         blank: flags["--blank"],
         dryRun: flags["--dry-run"],
