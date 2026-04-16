@@ -9,21 +9,58 @@
  *   maw fusion neo --into mawjs → merge neo → mawjs
  */
 
-interface InvokeContext {
-  source: "cli" | "api" | "peer";
-  args: string[] | Record<string, unknown>;
-}
-
-interface InvokeResult {
-  ok: boolean;
-  output?: string;
-  error?: string;
-}
+import { execSync } from "child_process";
+import { existsSync } from "fs";
+import { join } from "path";
+import type { InvokeContext, InvokeResult, VaultCategory } from "./types";
+import { executeMerge, FsVaultSource } from "./merge";
 
 export const command = {
   name: "fusion",
   description: "Fuse two oracles — merge knowledge across vaults",
 };
+
+/**
+ * Resolve an oracle's vault path by name, in this priority order:
+ *   1. ghq list — find any repo matching `<name>-oracle` or `<name>` (any org)
+ *   2. fleet config — read ~/.config/maw/fleet/*.json for a matching session
+ *
+ * Works for ANY org. No hardcoded org names.
+ */
+function resolveOracleVault(oracleName: string, ghqRoot: string): string | null {
+  // Strategy 1: ghq list — match `/<name>-oracle$` then `/<name>$`
+  for (const suffix of [`${oracleName}-oracle`, oracleName]) {
+    try {
+      const found = execSync(
+        `ghq list --full-path 2>/dev/null | grep -i '/${suffix}$' | head -1`,
+        { encoding: "utf-8", shell: "/bin/sh" }
+      ).trim();
+      if (found) {
+        const psi = join(found, "ψ");
+        if (existsSync(psi)) return psi;
+      }
+    } catch { /* grep returns 1 on no-match */ }
+  }
+
+  // Strategy 2: fleet config — read ~/.config/maw/fleet/*.json
+  try {
+    const home = process.env.HOME || "";
+    const fleetDir = join(home, ".config/maw/fleet");
+    if (existsSync(fleetDir)) {
+      const { readdirSync, readFileSync } = require("fs");
+      for (const file of readdirSync(fleetDir).filter((f: string) => f.endsWith(".json"))) {
+        const cfg = JSON.parse(readFileSync(join(fleetDir, file), "utf-8"));
+        const name = (cfg.name || "").replace(/^\d+-/, "");
+        if (name === oracleName && cfg.windows?.[0]?.repo) {
+          const psi = join(ghqRoot, "github.com", cfg.windows[0].repo, "ψ");
+          if (existsSync(psi)) return psi;
+        }
+      }
+    }
+  } catch { /* fleet config optional */ }
+
+  return null;
+}
 
 export default async function handler(ctx: InvokeContext): Promise<InvokeResult> {
   const logs: string[] = [];
@@ -37,6 +74,8 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       const dryRun = args.includes("--dry-run");
       const intoIdx = args.indexOf("--into");
       const target = intoIdx >= 0 ? args[intoIdx + 1] : undefined;
+      const category = args.includes("--category") ? args[args.indexOf("--category") + 1] : undefined;
+      const json = args.includes("--json");
 
       if (!source) {
         return { ok: false, error: "usage: maw fusion <source-oracle> [--into <target>] [--dry-run]" };
@@ -45,55 +84,51 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       console.log(`\x1b[36m⚡ Fusion\x1b[0m — ${source} → ${target ?? "current oracle"}`);
       console.log("");
 
-      // Resolve source oracle's ψ/ path
-      const { execSync } = require("child_process");
+      // Resolve source oracle's ψ/ path (org-agnostic)
       const ghqRoot = execSync("ghq root", { encoding: "utf-8" }).trim();
-      const { existsSync, readdirSync, cpSync } = require("fs");
-      const { join } = require("path");
 
-      // Try common patterns for oracle vault location
-      const candidates = [
-        join(ghqRoot, "github.com/Soul-Brews-Studio", `${source}-oracle`, "ψ/memory"),
-        join(ghqRoot, "github.com/Soul-Brews-Studio", source, "ψ/memory"),
-      ];
-
-      const sourcePath = candidates.find(p => existsSync(p));
+      const sourcePath = resolveOracleVault(source, ghqRoot);
       if (!sourcePath) {
         console.log(`  \x1b[31m✗\x1b[0m source vault not found for: ${source}`);
-        console.log(`  \x1b[90m  tried: ${candidates.join(", ")}\x1b[0m`);
+        console.log(`  \x1b[90m  searched ghq list and ~/.config/maw/fleet/\x1b[0m`);
         return { ok: false, output: logs.join("\n"), error: `vault not found: ${source}` };
       }
 
-      // Scan what's available
-      const categories = ["learnings", "resonance", "retrospectives", "traces"];
-      let totalFiles = 0;
-
-      for (const cat of categories) {
-        const catDir = join(sourcePath, cat);
-        if (!existsSync(catDir)) continue;
-        const files = readdirSync(catDir, { recursive: true })
-          .filter((f: string) => f.endsWith(".md"));
-        if (files.length === 0) continue;
-
-        console.log(`  \x1b[36m${cat}\x1b[0m — ${files.length} files`);
-        for (const f of files.slice(0, 3)) {
-          console.log(`    ${dryRun ? "[dry-run] " : ""}${f}`);
+      // Resolve target vault path
+      // --into <name> → resolve via ghq + fleet (same as source)
+      // (default)     → current working directory's ψ/ (the oracle invoking this command)
+      let targetPath: string | null;
+      if (target) {
+        targetPath = resolveOracleVault(target, ghqRoot);
+        if (!targetPath) {
+          console.log(`  \x1b[31m✗\x1b[0m target vault not found for: ${target}`);
+          console.log(`  \x1b[90m  searched ghq list and ~/.config/maw/fleet/\x1b[0m`);
+          return { ok: false, output: logs.join("\n"), error: `target vault not found: ${target}` };
         }
-        if (files.length > 3) console.log(`    ... +${files.length - 3} more`);
-        totalFiles += files.length;
-
-        if (!dryRun) {
-          // TODO: actual merge — copy to target vault with conflict resolution
-          // For now: just list what would merge
+      } else {
+        const cwdPsi = join(process.cwd(), "ψ");
+        if (!existsSync(cwdPsi)) {
+          console.log(`  \x1b[31m✗\x1b[0m no target — pass --into <name> or run from an oracle repo with ψ/`);
+          return { ok: false, output: logs.join("\n"), error: "no target vault" };
         }
+        targetPath = cwdPsi;
       }
 
-      console.log("");
-      if (dryRun) {
-        console.log(`\x1b[33m⬡\x1b[0m dry-run — ${totalFiles} files would fuse`);
+      const sourceVault = new FsVaultSource(source, sourcePath);
+      const targetVault = new FsVaultSource(target ?? "current", targetPath);
+
+      const report = executeMerge(sourceVault, targetVault, { dryRun, category: category as VaultCategory | undefined });
+
+      if (json) {
+        console.log(JSON.stringify(report, null, 2));
       } else {
-        console.log(`\x1b[32m✓\x1b[0m fusion scanned — ${totalFiles} files found`);
-        console.log(`\x1b[90m  (merge not yet implemented — use --dry-run to preview)\x1b[0m`);
+        console.log("");
+        console.log(`  \x1b[36mMerge Report\x1b[0m`);
+        console.log(`    skipped:    ${report.totals.skipped}`);
+        console.log(`    copied:     ${report.totals.copied}`);
+        console.log(`    conflicted: ${report.totals.conflicted}`);
+        if (dryRun) console.log(`  \x1b[33m⬡\x1b[0m dry-run — no files written`);
+        else        console.log(`  \x1b[32m✓\x1b[0m fusion complete`);
       }
     }
 

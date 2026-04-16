@@ -1,17 +1,18 @@
 {
   "name": "fusion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "weight": 50,
   "entry": "./index.ts",
   "sdk": "^1.0.0",
-  "description": "Fuse two oracles — merge knowledge, learnings, and resonance across ψ/ vaults",
+  "description": "Fuse two oracles — merge knowledge across vaults with provenance and conflict detection",
   "cli": {
     "command": "fusion",
-    "help": "maw fusion <source-oracle> [--into <target>] [--dry-run]",
+    "help": "maw fusion <source-oracle> [--into <target>] [--dry-run] [--category <cat>] [--json]",
     "flags": {
       "--into": "string",
       "--dry-run": "boolean",
-      "--json": "boolean"
+      "--json": "boolean",
+      "--category": "string"
     }
   },
   "api": {
