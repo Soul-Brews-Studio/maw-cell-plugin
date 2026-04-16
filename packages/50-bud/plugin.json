@@ -1,9 +1,9 @@
 {
   "name": "bud",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "entry": "./index.ts",
   "sdk": "^1.0.0",
-  "description": "Create a new oracle (bud from parent)",
+  "description": "Create a new oracle (bud from parent) — standalone-capable (no maw-js imports)",
   "cli": {
     "command": "bud",
     "help": "maw bud <name> [--from <oracle>] [--root] [--org <org>] [--repo org/repo] [--issue N] [--note <text>] [--fast] [--dry-run]",

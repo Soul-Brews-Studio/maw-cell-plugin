@@ -15,9 +15,9 @@ maw plugin install ~/Code/.../maw-cell-plugin/packages/50-fusion
 
 ## Plugins
 
-### bud (weight 50)
+### bud (weight 50, v1.1.0)
 
-Create new oracles from a parent.
+Create new oracles from a parent. Standalone-installable — no maw-js imports, safe to `maw plugin install` directly.
 
 ```bash
 maw bud my-new-oracle --from neo
