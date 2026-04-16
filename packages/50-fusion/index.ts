@@ -20,6 +20,48 @@ export const command = {
   description: "Fuse two oracles — merge knowledge across vaults",
 };
 
+/**
+ * Resolve an oracle's vault path by name, in this priority order:
+ *   1. ghq list — find any repo matching `<name>-oracle` or `<name>` (any org)
+ *   2. fleet config — read ~/.config/maw/fleet/*.json for a matching session
+ *
+ * Works for ANY org. No hardcoded org names.
+ */
+function resolveOracleVault(oracleName: string, ghqRoot: string): string | null {
+  // Strategy 1: ghq list — match `/<name>-oracle$` then `/<name>$`
+  for (const suffix of [`${oracleName}-oracle`, oracleName]) {
+    try {
+      const found = execSync(
+        `ghq list --full-path 2>/dev/null | grep -i '/${suffix}$' | head -1`,
+        { encoding: "utf-8", shell: "/bin/sh" }
+      ).trim();
+      if (found) {
+        const psi = join(found, "ψ");
+        if (existsSync(psi)) return psi;
+      }
+    } catch { /* grep returns 1 on no-match */ }
+  }
+
+  // Strategy 2: fleet config — read ~/.config/maw/fleet/*.json
+  try {
+    const home = process.env.HOME || "";
+    const fleetDir = join(home, ".config/maw/fleet");
+    if (existsSync(fleetDir)) {
+      const { readdirSync, readFileSync } = require("fs");
+      for (const file of readdirSync(fleetDir).filter((f: string) => f.endsWith(".json"))) {
+        const cfg = JSON.parse(readFileSync(join(fleetDir, file), "utf-8"));
+        const name = (cfg.name || "").replace(/^\d+-/, "");
+        if (name === oracleName && cfg.windows?.[0]?.repo) {
+          const psi = join(ghqRoot, "github.com", cfg.windows[0].repo, "ψ");
+          if (existsSync(psi)) return psi;
+        }
+      }
+    }
+  } catch { /* fleet config optional */ }
+
+  return null;
+}
+
 export default async function handler(ctx: InvokeContext): Promise<InvokeResult> {
   const logs: string[] = [];
   const origLog = console.log;
@@ -42,32 +84,34 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       console.log(`\x1b[36m⚡ Fusion\x1b[0m — ${source} → ${target ?? "current oracle"}`);
       console.log("");
 
-      // Resolve source oracle's ψ/ path
+      // Resolve source oracle's ψ/ path (org-agnostic)
       const ghqRoot = execSync("ghq root", { encoding: "utf-8" }).trim();
 
-      const sourceCandidates = [
-        join(ghqRoot, "github.com/Soul-Brews-Studio", `${source}-oracle`, "ψ"),
-        join(ghqRoot, "github.com/the-oracle-keeps-the-human-human", `${source}-oracle`, "ψ"),
-      ];
-
-      const sourcePath = sourceCandidates.find(p => existsSync(p));
+      const sourcePath = resolveOracleVault(source, ghqRoot);
       if (!sourcePath) {
         console.log(`  \x1b[31m✗\x1b[0m source vault not found for: ${source}`);
-        console.log(`  \x1b[90m  tried: ${sourceCandidates.join(", ")}\x1b[0m`);
+        console.log(`  \x1b[90m  searched ghq list and ~/.config/maw/fleet/\x1b[0m`);
         return { ok: false, output: logs.join("\n"), error: `vault not found: ${source}` };
       }
 
-      // Resolve target vault path (current oracle if --into omitted)
-      const targetCandidates = target
-        ? [
-            join(ghqRoot, "github.com/Soul-Brews-Studio", `${target}-oracle`, "ψ"),
-            join(ghqRoot, "github.com/the-oracle-keeps-the-human-human", `${target}-oracle`, "ψ"),
-          ]
-        : [process.cwd() + "/ψ"];  // current oracle
-      const targetPath = targetCandidates.find(p => existsSync(p));
-      if (!targetPath) {
-        console.log(`  \x1b[31m✗\x1b[0m target vault not found`);
-        return { ok: false, output: logs.join("\n"), error: "target vault not found" };
+      // Resolve target vault path
+      // --into <name> → resolve via ghq + fleet (same as source)
+      // (default)     → current working directory's ψ/ (the oracle invoking this command)
+      let targetPath: string | null;
+      if (target) {
+        targetPath = resolveOracleVault(target, ghqRoot);
+        if (!targetPath) {
+          console.log(`  \x1b[31m✗\x1b[0m target vault not found for: ${target}`);
+          console.log(`  \x1b[90m  searched ghq list and ~/.config/maw/fleet/\x1b[0m`);
+          return { ok: false, output: logs.join("\n"), error: `target vault not found: ${target}` };
+        }
+      } else {
+        const cwdPsi = join(process.cwd(), "ψ");
+        if (!existsSync(cwdPsi)) {
+          console.log(`  \x1b[31m✗\x1b[0m no target — pass --into <name> or run from an oracle repo with ψ/`);
+          return { ok: false, output: logs.join("\n"), error: "no target vault" };
+        }
+        targetPath = cwdPsi;
       }
 
       const sourceVault = new FsVaultSource(source, sourcePath);
