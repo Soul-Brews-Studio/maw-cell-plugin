@@ -9,16 +9,11 @@
  *   maw fusion neo --into mawjs → merge neo → mawjs
  */
 
-interface InvokeContext {
-  source: "cli" | "api" | "peer";
-  args: string[] | Record<string, unknown>;
-}
-
-interface InvokeResult {
-  ok: boolean;
-  output?: string;
-  error?: string;
-}
+import { execSync } from "child_process";
+import { existsSync } from "fs";
+import { join } from "path";
+import type { InvokeContext, InvokeResult, VaultCategory } from "./types";
+import { executeMerge, FsVaultSource } from "./merge";
 
 export const command = {
   name: "fusion",
@@ -37,6 +32,8 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       const dryRun = args.includes("--dry-run");
       const intoIdx = args.indexOf("--into");
       const target = intoIdx >= 0 ? args[intoIdx + 1] : undefined;
+      const category = args.includes("--category") ? args[args.indexOf("--category") + 1] : undefined;
+      const json = args.includes("--json");
 
       if (!source) {
         return { ok: false, error: "usage: maw fusion <source-oracle> [--into <target>] [--dry-run]" };
@@ -46,54 +43,48 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       console.log("");
 
       // Resolve source oracle's ψ/ path
-      const { execSync } = require("child_process");
       const ghqRoot = execSync("ghq root", { encoding: "utf-8" }).trim();
-      const { existsSync, readdirSync, cpSync } = require("fs");
-      const { join } = require("path");
 
-      // Try common patterns for oracle vault location
-      const candidates = [
-        join(ghqRoot, "github.com/Soul-Brews-Studio", `${source}-oracle`, "ψ/memory"),
-        join(ghqRoot, "github.com/Soul-Brews-Studio", source, "ψ/memory"),
+      const sourceCandidates = [
+        join(ghqRoot, "github.com/Soul-Brews-Studio", `${source}-oracle`, "ψ"),
+        join(ghqRoot, "github.com/the-oracle-keeps-the-human-human", `${source}-oracle`, "ψ"),
       ];
 
-      const sourcePath = candidates.find(p => existsSync(p));
+      const sourcePath = sourceCandidates.find(p => existsSync(p));
       if (!sourcePath) {
         console.log(`  \x1b[31m✗\x1b[0m source vault not found for: ${source}`);
-        console.log(`  \x1b[90m  tried: ${candidates.join(", ")}\x1b[0m`);
+        console.log(`  \x1b[90m  tried: ${sourceCandidates.join(", ")}\x1b[0m`);
         return { ok: false, output: logs.join("\n"), error: `vault not found: ${source}` };
       }
 
-      // Scan what's available
-      const categories = ["learnings", "resonance", "retrospectives", "traces"];
-      let totalFiles = 0;
-
-      for (const cat of categories) {
-        const catDir = join(sourcePath, cat);
-        if (!existsSync(catDir)) continue;
-        const files = readdirSync(catDir, { recursive: true })
-          .filter((f: string) => f.endsWith(".md"));
-        if (files.length === 0) continue;
-
-        console.log(`  \x1b[36m${cat}\x1b[0m — ${files.length} files`);
-        for (const f of files.slice(0, 3)) {
-          console.log(`    ${dryRun ? "[dry-run] " : ""}${f}`);
-        }
-        if (files.length > 3) console.log(`    ... +${files.length - 3} more`);
-        totalFiles += files.length;
-
-        if (!dryRun) {
-          // TODO: actual merge — copy to target vault with conflict resolution
-          // For now: just list what would merge
-        }
+      // Resolve target vault path (current oracle if --into omitted)
+      const targetCandidates = target
+        ? [
+            join(ghqRoot, "github.com/Soul-Brews-Studio", `${target}-oracle`, "ψ"),
+            join(ghqRoot, "github.com/the-oracle-keeps-the-human-human", `${target}-oracle`, "ψ"),
+          ]
+        : [process.cwd() + "/ψ"];  // current oracle
+      const targetPath = targetCandidates.find(p => existsSync(p));
+      if (!targetPath) {
+        console.log(`  \x1b[31m✗\x1b[0m target vault not found`);
+        return { ok: false, output: logs.join("\n"), error: "target vault not found" };
       }
 
-      console.log("");
-      if (dryRun) {
-        console.log(`\x1b[33m⬡\x1b[0m dry-run — ${totalFiles} files would fuse`);
+      const sourceVault = new FsVaultSource(source, sourcePath);
+      const targetVault = new FsVaultSource(target ?? "current", targetPath);
+
+      const report = executeMerge(sourceVault, targetVault, { dryRun, category: category as VaultCategory | undefined });
+
+      if (json) {
+        console.log(JSON.stringify(report, null, 2));
       } else {
-        console.log(`\x1b[32m✓\x1b[0m fusion scanned — ${totalFiles} files found`);
-        console.log(`\x1b[90m  (merge not yet implemented — use --dry-run to preview)\x1b[0m`);
+        console.log("");
+        console.log(`  \x1b[36mMerge Report\x1b[0m`);
+        console.log(`    skipped:    ${report.totals.skipped}`);
+        console.log(`    copied:     ${report.totals.copied}`);
+        console.log(`    conflicted: ${report.totals.conflicted}`);
+        if (dryRun) console.log(`  \x1b[33m⬡\x1b[0m dry-run — no files written`);
+        else        console.log(`  \x1b[32m✓\x1b[0m fusion complete`);
       }
     }
 
