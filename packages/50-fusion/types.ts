@@ -99,3 +99,50 @@ export interface MergeOptions {
   /** If set, restrict the merge to a single category. */
   category?: VaultCategory;
 }
+
+// --- Consent Protocol Types ---
+
+/** Event types in the append-only consent log. */
+export type ConsentEventType = "PROPOSE" | "ACCEPT" | "REJECT" | "REVOKE";
+
+/** A fusion proposal — two parents, one child. */
+export interface FusionProposal {
+  childName: string;
+  parents: [string, string];
+  /** Human who initiated the proposal. */
+  initiatedBy: string;
+}
+
+/** A single event in the consent log (JSONL format). */
+export interface ConsentEvent {
+  type: ConsentEventType;
+  /** Oracle name issuing this event. */
+  from: string;
+  /** The other oracle in the pair. */
+  to: string;
+  /** ISO 8601 timestamp. */
+  timestamp: string;
+  /** Present only on PROPOSE events. */
+  proposal?: FusionProposal;
+  /** Reason for ACCEPT, REJECT, or REVOKE. */
+  rationale?: string;
+}
+
+/** Computed consent state from replaying the event log. */
+export type ConsentState =
+  | "none"       // no proposal
+  | "proposed"   // PROPOSE sent, no response
+  | "partial"    // one ACCEPT, awaiting second
+  | "bilateral"  // both ACCEPT — fusion allowed
+  | "rejected"   // either party REJECT
+  | "revoked";   // REVOKE after bilateral
+
+/** Full consent status computed from event log replay. */
+export interface ConsentStatus {
+  state: ConsentState;
+  proposal: FusionProposal | null;
+  events: ConsentEvent[];
+  acceptedBy: string[];
+  rejectedBy: string[];
+  revokedBy: string[];
+}

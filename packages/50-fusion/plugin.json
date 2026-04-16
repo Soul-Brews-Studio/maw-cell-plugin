@@ -1,18 +1,21 @@
 {
   "name": "fusion",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "weight": 50,
   "entry": "./index.ts",
   "sdk": "^1.0.0",
   "description": "Fuse two oracles — merge knowledge across vaults with provenance and conflict detection",
   "cli": {
     "command": "fusion",
-    "help": "maw fusion <source-oracle> [--into <target>] [--dry-run] [--category <cat>] [--json]",
+    "help": "maw fusion <source-oracle> [--into <target>] [--dry-run]\n       maw fusion consent <propose|accept|reject|revoke|status|check|log> ...",
     "flags": {
       "--into": "string",
       "--dry-run": "boolean",
       "--json": "boolean",
-      "--category": "string"
+      "--category": "string",
+      "--child": "string",
+      "--by": "string",
+      "--reason": "string"
     }
   },
   "api": {
