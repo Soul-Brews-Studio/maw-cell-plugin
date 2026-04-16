@@ -4,5 +4,8 @@
   "version": "0.1.0",
   "description": "maw-js cell — bud + fusion plugins",
   "workspaces": ["packages/*"],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "arg": "^5.0.2"
+  }
 }

@@ -1,7 +1,7 @@
 /**
  * Unit tests for the bud plugin handler.
  *
- * parseFlags + the 7 bud steps are module-private, so we exercise them
+ * Flag parsing (via `arg`) + the 7 bud steps are module-private, so we exercise them
  * through the exported `handler` function. Each test asserts a falsifiable
  * claim about input → { ok, output, error }.
  */

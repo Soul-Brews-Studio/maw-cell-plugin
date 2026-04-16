@@ -6,7 +6,7 @@
  *
  * Same standalone-friendly pattern as 50-fusion:
  *   - Local types (no broken ../../../plugin/types imports)
- *   - Inline parseFlags (no broken ../../../cli/parse-args import)
+ *   - Uses `arg` (Vercel) for flag parsing instead of broken ../../../cli/parse-args
  *   - Inline the 7 bud steps (no broken ../../bud import)
  *
  * Simplifications vs maw-js core (deliberately omitted, can be added
@@ -17,6 +17,7 @@
  *   - Does NOT support --tiny (use `maw bud` from maw-js core for tiny buds)
  */
 
+import arg from "arg";
 import { execSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -38,22 +39,15 @@ interface BudOpts {
 
 // ─── Inlined utilities ──────────────────────────────────────────────
 
-/** Minimal flag parser — string/number/boolean. Drops unknown flags. */
-function parseFlags(args: string[], spec: Record<string, "string" | "number" | "boolean">) {
-  const out: { _: string[]; [k: string]: any } = { _: [] };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      const t = spec[a];
-      if (t === "boolean" || t === undefined) out[a] = true;
-      else if (t === "number") out[a] = Number(args[++i]);
-      else out[a] = args[++i];
-    } else {
-      out._.push(a);
-    }
-  }
-  return out;
-}
+/** arg spec for bud CLI flags. */
+const BUD_FLAGS = {
+  "--from": String,
+  "--org": String,
+  "--note": String,
+  "--root": Boolean,
+  "--blank": Boolean,
+  "--dry-run": Boolean,
+};
 
 /** Run a shell command, return stdout. Throws on non-zero exit. */
 function sh(cmd: string): string {
@@ -360,14 +354,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
 
     if (ctx.source === "cli") {
       const args = ctx.args as string[];
-      const flags = parseFlags(args, {
-        "--from": "string",
-        "--org": "string",
-        "--note": "string",
-        "--root": "boolean",
-        "--blank": "boolean",
-        "--dry-run": "boolean",
-      });
+      const flags = arg(BUD_FLAGS, { argv: args, permissive: true });
       name = flags._[0] || "";
       if (!name || name === "--help" || name === "-h") {
         return {

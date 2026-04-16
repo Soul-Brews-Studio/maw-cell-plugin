@@ -9,6 +9,7 @@
  *   maw fusion neo --into mawjs → merge neo → mawjs
  */
 
+import arg from "arg";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -81,11 +82,13 @@ function resolveConsentVault(): string | null {
   return existsSync(cwdPsi) ? cwdPsi : null;
 }
 
-/** Parse `--flag value` from arg list. */
-function flag(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : undefined;
-}
+/** arg spec shared by all consent subcommands. */
+const CONSENT_FLAGS = {
+  "--child": String,
+  "--by": String,
+  "--reason": String,
+  "--json": Boolean,
+};
 
 const CONSENT_USAGE = [
   "usage: maw fusion consent <verb> ...",
@@ -99,8 +102,10 @@ const CONSENT_USAGE = [
   "  log     <a> <b>",
 ].join("\n");
 
-function handleConsent(args: string[], _logs: string[]): InvokeResult {
-  const verb = args[0];
+function handleConsent(rawArgs: string[]): InvokeResult {
+  const parsed = arg(CONSENT_FLAGS, { argv: rawArgs, permissive: true });
+  const [verb, ...positionals] = parsed._;
+
   if (!verb) {
     console.log(CONSENT_USAGE);
     return { ok: false, error: "missing verb" };
@@ -111,22 +116,13 @@ function handleConsent(args: string[], _logs: string[]): InvokeResult {
     return { ok: false, error: "no ψ/ in cwd — run from an oracle repo" };
   }
   const store = new FsConsentStore(vaultPath);
-  const json = args.includes("--json");
-
-  // Extract positional args, skipping flag values.
-  const rawAfterVerb = args.slice(1);
-  const positionals: string[] = [];
-  for (let i = 0; i < rawAfterVerb.length; i++) {
-    const a = rawAfterVerb[i];
-    if (a.startsWith("--")) { i++; continue; }
-    positionals.push(a);
-  }
+  const json = parsed["--json"] ?? false;
 
   try {
     if (verb === "propose") {
       const [a, b] = positionals;
-      const child = flag(args, "--child");
-      const by = flag(args, "--by") ?? process.env.USER ?? "unknown";
+      const child = parsed["--child"];
+      const by = parsed["--by"] ?? process.env.USER ?? "unknown";
       if (!a || !b || !child) {
         return { ok: false, error: "usage: consent propose <a> <b> --child <name> [--by <human>]" };
       }
@@ -138,7 +134,7 @@ function handleConsent(args: string[], _logs: string[]): InvokeResult {
 
     if (verb === "accept" || verb === "reject" || verb === "revoke") {
       const [who, a, b] = positionals;
-      const reason = flag(args, "--reason");
+      const reason = parsed["--reason"];
       if (!who || !a || !b) {
         return { ok: false, error: `usage: consent ${verb} <who> <a> <b> [--reason <r>]` };
       }
@@ -211,17 +207,23 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
 
       // Subcommand dispatch: `maw fusion consent <verb> ...`
       if (args[0] === "consent") {
-        const result = handleConsent(args.slice(1), logs);
+        const result = handleConsent(args.slice(1));
         const captured = logs.join("\n") || undefined;
         return { ...result, output: captured ?? result.output };
       }
 
-      const source = args.find(a => !a.startsWith("-"));
-      const dryRun = args.includes("--dry-run");
-      const intoIdx = args.indexOf("--into");
-      const target = intoIdx >= 0 ? args[intoIdx + 1] : undefined;
-      const category = args.includes("--category") ? args[args.indexOf("--category") + 1] : undefined;
-      const json = args.includes("--json");
+      const parsed = arg({
+        "--into": String,
+        "--dry-run": Boolean,
+        "--json": Boolean,
+        "--category": String,
+      }, { argv: args, permissive: true });
+
+      const source = parsed._[0];
+      const dryRun = parsed["--dry-run"] ?? false;
+      const target = parsed["--into"];
+      const category = parsed["--category"];
+      const json = parsed["--json"] ?? false;
 
       if (!source) {
         return { ok: false, error: "usage: maw fusion <source-oracle> [--into <target>] [--dry-run]\n       maw fusion consent <verb> ..." };
