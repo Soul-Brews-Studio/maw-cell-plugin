@@ -218,6 +218,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
         "--dry-run": Boolean,
         "--json": Boolean,
         "--category": String,
+        "--skip-consent": Boolean,
       }, { argv: args, permissive: true });
 
       const source = parsed._[0];
@@ -225,6 +226,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       const target = parsed["--into"];
       const category = parsed["--category"];
       const json = parsed["--json"] ?? false;
+      const skipConsent = parsed["--skip-consent"] ?? false;
 
       if (!source) {
         return { ok: false, error: "usage: maw fusion <source-oracle> [--into <target>] [--dry-run]\n       maw fusion consent <verb> ..." };
@@ -261,6 +263,21 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
           return { ok: false, output: logs.join("\n"), error: "no target vault" };
         }
         targetPath = cwdPsi;
+      }
+
+      // Consent gate — bilateral consent required unless --skip-consent
+      if (!skipConsent) {
+        const consentStore = new FsConsentStore(targetPath);
+        if (!hasConsent(consentStore, source, target ?? "current")) {
+          console.log(`  \x1b[31m✗\x1b[0m no bilateral consent for ${source} → ${target ?? "current"}`);
+          console.log(`  \x1b[90m  to authorize, run:\x1b[0m`);
+          console.log(`  \x1b[90m    maw fusion consent propose ${source} ${target ?? "current"} --child <name>\x1b[0m`);
+          console.log(`  \x1b[90m    maw fusion consent accept ${source} ${source} ${target ?? "current"}\x1b[0m`);
+          console.log(`  \x1b[90m    maw fusion consent accept ${target ?? "current"} ${source} ${target ?? "current"}\x1b[0m`);
+          console.log(`  \x1b[90m  or use --skip-consent to bypass\x1b[0m`);
+          return { ok: false, output: logs.join("\n"), error: "no bilateral consent" };
+        }
+        console.log(`  \x1b[32m✓\x1b[0m bilateral consent verified`);
       }
 
       const sourceVault = new FsVaultSource(source, sourcePath);

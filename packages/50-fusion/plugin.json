@@ -15,7 +15,8 @@
       "--category": "string",
       "--child": "string",
       "--by": "string",
-      "--reason": "string"
+      "--reason": "string",
+      "--skip-consent": "boolean"
     }
   },
   "api": {
