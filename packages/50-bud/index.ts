@@ -37,6 +37,7 @@ interface BudOpts {
   root?: boolean;
   blank?: boolean;
   dryRun?: boolean;
+  fromVault?: string;
 }
 
 // ─── Inlined utilities ──────────────────────────────────────────────
@@ -50,6 +51,7 @@ const BUD_FLAGS = {
   "--root": Boolean,
   "--blank": Boolean,
   "--dry-run": Boolean,
+  "--from-vault": String,
 };
 
 /** Run a shell command, return stdout. Throws on non-zero exit. */
@@ -314,6 +316,54 @@ function step7_updateParentPeers(name: string, parentName: string | null, dryRun
   return logs;
 }
 
+function step8_seedFromVault(vaultOracleName: string, budRepoPath: string, dryRun: boolean): string[] {
+  const logs: string[] = [];
+
+  // Find oracle-vault via ghq
+  const vaultRoot = shSafe("ghq list --full-path | grep oracle-vault | head -1");
+  if (!vaultRoot) {
+    logs.push(`  ⚠ oracle-vault not found via ghq — skipping --from-vault`);
+    return logs;
+  }
+
+  // Search for the absorbed oracle across providers
+  let vaultPsiPath = "";
+  const providers = ["github.com", "gitlab.com", "codeberg.org"];
+  for (const provider of providers) {
+    const providerDir = join(vaultRoot, provider);
+    if (!existsSync(providerDir)) continue;
+    for (const org of readdirSync(providerDir)) {
+      const candidate = join(providerDir, org);
+      if (!existsSync(join(candidate, vaultOracleName))) continue;
+      const oraclePath = join(candidate, vaultOracleName);
+      if (existsSync(join(oraclePath, "ψ"))) {
+        vaultPsiPath = join(oraclePath, "ψ");
+        break;
+      }
+    }
+    if (vaultPsiPath) break;
+  }
+
+  if (!vaultPsiPath) {
+    logs.push(`  ⚠ "${vaultOracleName}" not found in oracle-vault (or has no ψ/) — skipping`);
+    return logs;
+  }
+
+  if (dryRun) {
+    logs.push(`  ⬡ [dry-run] would seed from vault: ${vaultPsiPath} → ${budRepoPath}/ψ/`);
+    return logs;
+  }
+
+  // Use the fusion merge engine to seed knowledge from vault
+  const { executeMerge: doMerge, FsVaultSource: FsVault } = require("../50-fusion/merge");
+  const vaultSource = new FsVault(vaultOracleName, vaultPsiPath);
+  const childTarget = new FsVault("child", join(budRepoPath, "ψ"));
+  const report = doMerge(vaultSource, childTarget);
+
+  logs.push(`  ✓ seeded from vault "${vaultOracleName}": ${report.totals.copied} copied, ${report.totals.skipped} skipped, ${report.totals.conflicted} conflicted`);
+  return logs;
+}
+
 // ─── Main bud function ─────────────────────────────────────────────
 
 async function cmdBud(name: string, opts: BudOpts): Promise<string[]> {
@@ -359,6 +409,11 @@ async function cmdBud(name: string, opts: BudOpts): Promise<string[]> {
   logs.push(...step6_gitCommit(budRepoPath, parentName, !!opts.dryRun));
   logs.push(...step7_updateParentPeers(name, parentName, !!opts.dryRun));
 
+  // Step 8: Seed from vault (if --from-vault specified)
+  if (opts.fromVault) {
+    logs.push(...step8_seedFromVault(opts.fromVault, budRepoPath, !!opts.dryRun));
+  }
+
   // Soul-sync notice (not implemented standalone — needs maw-js for now)
   if (!opts.dryRun && !opts.blank && parentName) {
     logs.push(`  ⚠ soul-sync not run (cell-plugin standalone) — run \`maw soul-sync ${parentName} --from\` from inside ${budRepoPath} to seed inherited memory`);
@@ -386,7 +441,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       if (!name || name === "--help" || name === "-h") {
         return {
           ok: false,
-          error: "usage: maw bud <name> [--from <oracle> | --root] [--org <org>] [--provider <forge>] [--note <text>] [--blank] [--dry-run]",
+          error: "usage: maw bud <name> [--from <oracle> | --root] [--org <org>] [--provider <forge>] [--note <text>] [--blank] [--dry-run] [--from-vault <name>]",
         };
       }
       if (name.startsWith("-")) {
@@ -400,6 +455,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
         root: flags["--root"],
         blank: flags["--blank"],
         dryRun: flags["--dry-run"],
+        fromVault: flags["--from-vault"],
       };
     } else if (ctx.source === "api") {
       const body = ctx.args as Record<string, unknown>;
@@ -412,6 +468,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
         root: body.root as boolean | undefined,
         blank: body.blank as boolean | undefined,
         dryRun: body.dryRun as boolean | undefined,
+        fromVault: body.fromVault as string | undefined,
       };
     } else {
       return { ok: false, error: `unsupported source: ${ctx.source}` };
