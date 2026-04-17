@@ -5,7 +5,7 @@
  * and 50-fusion:
  *   - Local types (no broken ../../../plugin/types imports)
  *   - Uses `arg` (Vercel) for flag parsing
- *   - Inline sh/shSafe helpers
+ *   - Shared shell utilities (../shared/shell)
  *
  * The 7 absorb steps:
  *   1. Verify oracle exists in fleet config
@@ -18,7 +18,7 @@
  */
 
 import arg from "arg";
-import { execSync } from "child_process";
+import { run, runSafe, ghqRoot, ghqListFullPath } from "../shared/shell";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { join, basename } from "path";
 import type { InvokeContext, InvokeResult, AbsorbRecord } from "./types";
@@ -34,18 +34,6 @@ const ABSORB_FLAGS = {
   "--dry-run": Boolean,
   "--json": Boolean,
 };
-
-// ─── Inlined utilities ──────────────────────────────────────────────
-
-/** Run a shell command, return stdout. Throws on non-zero exit. */
-function sh(cmd: string): string {
-  return execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-}
-
-/** Run a shell command, return stdout — never throws (returns "" on failure). */
-function shSafe(cmd: string): string {
-  try { return sh(cmd); } catch { return ""; }
-}
 
 /** Resolve fleet config dir (env override, then HOME-based default). */
 function fleetDir(): string {
@@ -109,7 +97,7 @@ function resolveOracleFromFleet(name: string): OracleInfo | null {
 
 /** Find oracle-vault path via ghq. */
 function resolveVaultPath(): string | null {
-  const found = shSafe("ghq list --full-path | grep oracle-vault | head -1");
+  const found = ghqListFullPath("oracle-vault")[0] || "";
   return found || null;
 }
 
@@ -150,7 +138,7 @@ function step3_sync(oraclePsiPath: string, vaultPsiDir: string, dryRun: boolean)
     // Count what would sync
     let count = 0;
     if (existsSync(oraclePsiPath)) {
-      const countOut = shSafe(`find '${oraclePsiPath}' -name '*.md' -type f | wc -l`);
+      const countOut = runSafe(`find '${oraclePsiPath}' -name '*.md' -type f | wc -l`);
       count = parseInt(countOut, 10) || 0;
     }
     logs.push(`  \u2b21 [dry-run] would rsync ${count} .md files from \u03c8/ to vault`);
@@ -166,7 +154,7 @@ function step3_sync(oraclePsiPath: string, vaultPsiDir: string, dryRun: boolean)
 
   mkdirSync(vaultPsiDir, { recursive: true });
 
-  const rsyncOut = sh(
+  const rsyncOut = run(
     `rsync -av --include='*/' --include='*.md' --exclude='*' '${oraclePsiPath}/' '${vaultPsiDir}/'`
   );
 
@@ -234,7 +222,7 @@ function step6_archive(repoSlug: string, dryRun: boolean): string[] {
   }
 
   try {
-    sh(`gh repo archive ${repoSlug} -y`);
+    run(`gh repo archive ${repoSlug} -y`);
     logs.push(`  \x1b[32m\u2713\x1b[0m repo archived: ${repoSlug}`);
   } catch {
     logs.push(`  \x1b[33m\u26a0\x1b[0m repo archive failed (may need manual archive): ${repoSlug}`);
@@ -295,8 +283,8 @@ async function cmdAbsorb(name: string, confirm: boolean, reason: string, dryRun:
   const vaultPsiDir = join(vaultOracleDir, "\u03c8");
 
   // Resolve the oracle's local ψ/ path via ghq
-  const ghqRoot = shSafe("ghq root") || join(process.env.HOME || "", "Code");
-  const oracleLocalPath = join(ghqRoot, oracle.provider, oracle.org, oracle.repoName);
+  const ghqRootDir = ghqRoot();
+  const oracleLocalPath = join(ghqRootDir, oracle.provider, oracle.org, oracle.repoName);
   const oraclePsiPath = join(oracleLocalPath, "\u03c8");
 
   const { logs: syncLogs, fileCount } = step3_sync(oraclePsiPath, vaultPsiDir, dryRun);

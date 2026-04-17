@@ -10,7 +10,7 @@
  */
 
 import arg from "arg";
-import { execSync } from "child_process";
+import { run, runSafe, ghqRoot as resolveGhqRoot } from "../shared/shell";
 import { existsSync } from "fs";
 import { join } from "path";
 import type { InvokeContext, InvokeResult, VaultCategory } from "./types";
@@ -41,10 +41,7 @@ function resolveOracleVault(oracleName: string, ghqRoot: string): string | null 
   // Strategy 1: ghq list — match `/<name>-oracle$` then `/<name>$`
   for (const suffix of [`${oracleName}-oracle`, oracleName]) {
     try {
-      const found = execSync(
-        `ghq list --full-path 2>/dev/null | grep -i '/${suffix}$' | head -1`,
-        { encoding: "utf-8", shell: "/bin/sh" }
-      ).trim();
+      const found = runSafe(`ghq list --full-path 2>/dev/null | grep -i '/${suffix}$' | head -1`);
       if (found) {
         const psi = join(found, "ψ");
         if (existsSync(psi)) return psi;
@@ -236,7 +233,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       console.log("");
 
       // Resolve source oracle's ψ/ path (org-agnostic)
-      const ghqRoot = execSync("ghq root", { encoding: "utf-8" }).trim();
+      const ghqRoot = resolveGhqRoot();
 
       const sourcePath = resolveOracleVault(source, ghqRoot);
       if (!sourcePath) {

@@ -6,8 +6,8 @@
  * directory layout: `{provider}/{org}/{repo}`.
  */
 
-import { execSync } from "child_process";
 import { join } from "path";
+import { runSafe } from "./shell";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,12 +128,7 @@ export function ghqCloneUri(provider: ForgeProvider, slug: string): string {
  * Check if a CLI tool is available on PATH.
  */
 export function cliAvailable(cmd: string): boolean {
-  try {
-    execSync(`command -v ${cmd}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+  return runSafe(`command -v ${cmd}`) !== "";
 }
 
 /**

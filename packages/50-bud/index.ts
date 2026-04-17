@@ -18,11 +18,11 @@
  */
 
 import arg from "arg";
-import { execSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { InvokeContext, InvokeResult } from "./types";
 import { type ForgeProvider, PROVIDER_CLI, ghqCloneUri, parseProvider, providerRepoPath, requireCli } from "../shared/provider";
+import { run, runSafe, ghqRoot } from "../shared/shell";
 
 export const command = {
   name: "bud",
@@ -54,30 +54,11 @@ const BUD_FLAGS = {
   "--from-vault": String,
 };
 
-/** Run a shell command, return stdout. Throws on non-zero exit. */
-function sh(cmd: string): string {
-  return execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-}
-
-/** Run a shell command, return stdout — never throws (returns "" on failure). */
-function shSafe(cmd: string): string {
-  try { return sh(cmd); } catch { return ""; }
-}
-
 /** Resolve fleet config dir (env override, then HOME-based default). Throws if HOME unset. */
 function fleetDir(): string {
   if (process.env.MAW_CONFIG_DIR) return join(process.env.MAW_CONFIG_DIR, "fleet");
   if (!process.env.HOME) throw new Error("HOME not set — cannot resolve fleet dir. Set MAW_CONFIG_DIR or HOME.");
   return join(process.env.HOME, ".config/maw/fleet");
-}
-
-/** Resolve ghq root (env, then `ghq root`, then $HOME/Code). Throws if HOME unset and no overrides. */
-function ghqRoot(): string {
-  if (process.env.GHQ_ROOT) return process.env.GHQ_ROOT;
-  const fromGhq = shSafe("ghq root");
-  if (fromGhq) return fromGhq;
-  if (!process.env.HOME) throw new Error("HOME not set and ghq unavailable — cannot resolve repo root. Set GHQ_ROOT or HOME.");
-  return join(process.env.HOME, "Code");
 }
 
 /** Validate org name — same character set as oracle names (prevents shell injection). */
@@ -126,31 +107,31 @@ function step1_createRepo(budRepoSlug: string, budRepoPath: string, provider: Fo
   requireCli(provider);
   const budRepoName = budRepoSlug.split("/").pop() || "";
   if (provider === "github.com") {
-    const viewOut = shSafe(`gh repo view ${budRepoSlug} --json name --jq .name 2>/dev/null`);
+    const viewOut = runSafe(`gh repo view ${budRepoSlug} --json name --jq .name 2>/dev/null`);
     if (viewOut === budRepoName) {
       logs.push(`  ○ repo already exists on ${provider}`);
     } else {
-      sh(`gh repo create ${budRepoSlug} --private --add-readme`);
+      run(`gh repo create ${budRepoSlug} --private --add-readme`);
       logs.push(`  ✓ repo created on ${provider}: ${budRepoSlug}`);
     }
   } else if (provider === "gitlab.com") {
-    const viewOut = shSafe(`glab repo view ${budRepoSlug} 2>/dev/null`);
+    const viewOut = runSafe(`glab repo view ${budRepoSlug} 2>/dev/null`);
     if (viewOut.length > 0) {
       logs.push(`  ○ repo already exists on ${provider}`);
     } else {
-      sh(`glab repo create ${budRepoSlug} --private --defaultBranch main`);
+      run(`glab repo create ${budRepoSlug} --private --defaultBranch main`);
       logs.push(`  ✓ repo created on ${provider}: ${budRepoSlug}`);
     }
   } else if (provider === "codeberg.org") {
-    const viewOut = shSafe(`tea repos search --limit 1 ${budRepoName} 2>/dev/null`);
+    const viewOut = runSafe(`tea repos search --limit 1 ${budRepoName} 2>/dev/null`);
     if (viewOut.includes(budRepoName)) {
       logs.push(`  ○ repo already exists on ${provider}`);
     } else {
-      sh(`tea repos create --name ${budRepoName} --private`);
+      run(`tea repos create --name ${budRepoName} --private`);
       logs.push(`  ✓ repo created on ${provider}: ${budRepoSlug}`);
     }
   }
-  sh(`ghq get ${ghqCloneUri(provider, budRepoSlug)}`);
+  run(`ghq get ${ghqCloneUri(provider, budRepoSlug)}`);
   logs.push(`  ✓ cloned via ghq`);
   return logs;
 }
@@ -281,9 +262,9 @@ function step6_gitCommit(budRepoPath: string, parentName: string | null, dryRun:
     return logs;
   }
   try {
-    sh(`git -C '${budRepoPath}' add -A`);
-    sh(`git -C '${budRepoPath}' commit -m 'feat: birth — ${parentName ? `budded from ${parentName}` : "root oracle"}'`);
-    sh(`git -C '${budRepoPath}' push -u origin HEAD`);
+    run(`git -C '${budRepoPath}' add -A`);
+    run(`git -C '${budRepoPath}' commit -m 'feat: birth — ${parentName ? `budded from ${parentName}` : "root oracle"}'`);
+    run(`git -C '${budRepoPath}' push -u origin HEAD`);
     logs.push(`  ✓ initial commit pushed`);
   } catch {
     logs.push(`  ⚠ git push failed (may need manual setup)`);
@@ -320,7 +301,7 @@ function step8_seedFromVault(vaultOracleName: string, budRepoPath: string, dryRu
   const logs: string[] = [];
 
   // Find oracle-vault via ghq
-  const vaultRoot = shSafe("ghq list --full-path | grep oracle-vault | head -1");
+  const vaultRoot = runSafe("ghq list --full-path | grep oracle-vault | head -1");
   if (!vaultRoot) {
     logs.push(`  ⚠ oracle-vault not found via ghq — skipping --from-vault`);
     return logs;

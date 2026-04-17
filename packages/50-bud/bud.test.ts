@@ -19,6 +19,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import handler from "./index";
 import type { InvokeResult } from "./types";
+import { _clearGhqRootCache } from "../shared/shell";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,6 +50,7 @@ afterEach(() => {
     else process.env[k] = v;
   }
   for (const k of Object.keys(savedEnv)) delete savedEnv[k];
+  _clearGhqRootCache();
 });
 
 async function cli(args: string[]): Promise<InvokeResult> {
